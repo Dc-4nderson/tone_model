@@ -1,6 +1,6 @@
 import streamlit as st
 import json
-from model import pipe
+import importlib
 
 st.set_page_config(page_title="Tone Classification", layout="centered")
 
@@ -48,14 +48,49 @@ st.markdown(
 
 text_input = st.text_input("Enter text to classify:", "", key="text_input")
 
+if "pipe" not in st.session_state:
+    st.session_state["pipe"] = None
+
 if st.button("Classify"):
     if text_input.strip():
+        # Lazy load the model
+        if st.session_state["pipe"] is None:
+            model_module = importlib.import_module("model")
+            st.session_state["pipe"] = model_module.get_pipe()
+        pipe = st.session_state["pipe"]
         result = pipe(text_input)
         label = result[0]["label"] if result and "label" in result[0] else str(result)
         st.markdown(f"**Predicted Tone:** {label}")
-        # Append to jsonl file
-        data = {"text": text_input, "label": label}
-        with open("classified_data.jsonl", "a") as f:
-            f.write(json.dumps(data) + "\n")
+        st.markdown(f"**Model Confidence:** {result[0]['score']}" if result and "score" in result[0] else "")
+        # Section for user feedback
+        st.markdown("---")
+        st.markdown("#### Was the predicted tone correct?")
+        correct = st.radio("Select an option:", ["Yes", "No"], key="correct_radio")
+        corrected_label = ""
+        if correct == "No":
+            corrected_label = st.text_input("Enter the correct tone:", "", key="corrected_label")
+        if st.button("Save Result"):
+            final_label = corrected_label if correct == "No" and corrected_label else label
+            data = {"text": text_input, "label": final_label}
+            # Overwrite jsonl if correction, else append
+            if correct == "No" and corrected_label:
+                # Read all lines, replace last entry
+                try:
+                    with open("classified_data.jsonl", "r") as f:
+                        lines = f.readlines()
+                    if lines:
+                        lines[-1] = json.dumps(data) + "\n"
+                        with open("classified_data.jsonl", "w") as f:
+                            f.writelines(lines)
+                    else:
+                        with open("classified_data.jsonl", "a") as f:
+                            f.write(json.dumps(data) + "\n")
+                except FileNotFoundError:
+                    with open("classified_data.jsonl", "a") as f:
+                        f.write(json.dumps(data) + "\n")
+            else:
+                with open("classified_data.jsonl", "a") as f:
+                    f.write(json.dumps(data) + "\n")
+            st.success(f"Saved: {data}")
     else:
         st.warning("Please enter some text.")
